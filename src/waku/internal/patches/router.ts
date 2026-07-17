@@ -159,6 +159,19 @@ export function router(
           !openapiRoutePaths.has(path) &&
           (config.openapi ?? []).some((entry) => path.startsWith(`${entry.path}/`))
 
+        // Route paths already claimed by an explicit page or API route.
+        // Auto-generated OpenAPI section/group pages yield to these so a spec
+        // group whose id collides with a real route (e.g. an `mcp` group under
+        // an `/api` section vs. the built-in `/api/mcp` endpoint) can't throw
+        // `Duplicated path` at build time. Registering the same page twice is
+        // also guarded, keeping OpenAPI mounting idempotent.
+        const registeredRoutePaths = new Set<string>()
+        const createOpenApiPage = (page: { path: string; [key: string]: unknown }) => {
+          if (registeredRoutePaths.has(page.path)) return
+          registeredRoutePaths.add(page.path)
+          createPage(page as never)
+        }
+
         for (const file in allModules) {
           const importFn = allModules[file]
           if (!importFn) continue
@@ -230,6 +243,7 @@ export function router(
                 ...sourceFileProperty,
               })
             } else {
+              registeredRoutePaths.add(path)
               createPage({
                 path,
                 component,
@@ -246,6 +260,7 @@ export function router(
           if (pathItems.at(0) === apiDir) {
             // Strip the apiDir prefix from the path (e.g., _api/hello.txt -> hello.txt)
             const apiPath = '/' + pathItems.slice(1).join('/')
+            registeredRoutePaths.add(apiPath)
             if (config?.render === 'static') {
               if (hasInvalidStaticApiExports(mod) || !mod.GET) {
                 console.warn(
@@ -299,6 +314,7 @@ export function router(
               ...sourceFileProperty,
             })
           } else {
+            registeredRoutePaths.add(path)
             createPage({
               path,
               component: mod.default,
@@ -338,7 +354,7 @@ export function router(
           for (const entry of config.openapi) {
             // Section root: overview listing every category.
             const rootProps = await overrideProps(entry.path)
-            createPage({
+            createOpenApiPage({
               path: entry.path,
               component: () =>
                 createElement(OpenApiPage, {
@@ -354,7 +370,7 @@ export function router(
             for (const group of ir?.groups ?? []) {
               const groupRoute = `${entry.path}/${group.id}`
               const groupProps = await overrideProps(groupRoute)
-              createPage({
+              createOpenApiPage({
                 path: groupRoute,
                 component: () =>
                   createElement(OpenApiPage, { mount: entry.path, group: group.id, ...groupProps }),
@@ -375,7 +391,7 @@ export function router(
               if (!mod.default) continue
               const Content = mod.default
               const title = mod.frontmatter?.title
-              createPage({
+              createOpenApiPage({
                 path: routePath,
                 component: () => createElement(OpenApiGuide, { title }, createElement(Content)),
                 render: 'static',

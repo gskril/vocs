@@ -224,6 +224,16 @@
       "src": "./src/waku/internal/patches/adapters/node.ts",
       "default": "./dist/waku/internal/patches/adapters/node.js"
     },
+    "./waku/internal/patches/adapters/cloudflare": {
+      "types": "./dist/waku/internal/patches/adapters/cloudflare.d.ts",
+      "src": "./src/waku/internal/patches/adapters/cloudflare.ts",
+      "default": "./dist/waku/internal/patches/adapters/cloudflare.js"
+    },
+    "./waku/internal/patches/adapters/cloudflare-build-enhancer": {
+      "types": "./dist/waku/internal/patches/adapters/cloudflare-build-enhancer.d.ts",
+      "src": "./src/waku/internal/patches/adapters/cloudflare-build-enhancer.ts",
+      "default": "./dist/waku/internal/patches/adapters/cloudflare-build-enhancer.js"
+    },
     "./waku/internal/patches/adapters/vercel-build-enhancer": {
       "types": "./dist/waku/internal/patches/adapters/vercel-build-enhancer.d.ts",
       "src": "./src/waku/internal/patches/adapters/vercel-build-enhancer.ts",
