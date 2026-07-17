@@ -1,0 +1,76 @@
+---
+outline: 2
+---
+
+# Cloudflare [Deploy your Vocs site to Cloudflare Workers]
+
+Vocs doesn't ship a Cloudflare adapter yet, so deploy as a fully static site served by [Workers static assets](https://developers.cloudflare.com/workers/static-assets/). Features that need a server runtime — dynamic OG images, page feedback, MCP, and custom API routes — are disabled in this mode (see [SSG or SSR](/features/render-strategies)).
+
+## Configure for Static Output
+
+Set the render strategy to `full-static` and provide a static `ogImageUrl`, since the dynamic `/api/og` endpoint won't exist:
+
+```ts [vocs.config.ts]
+import { defineConfig } from 'vocs/config'
+
+export default defineConfig({
+  renderStrategy: 'full-static', // [!code focus]
+  ogImageUrl: '/og-default.png', // [!code focus]
+})
+```
+
+## Add a Wrangler Config
+
+Commit a `wrangler.jsonc` to the project root that points Workers at the static build output:
+
+```jsonc [wrangler.jsonc]
+{
+  "name": "my-docs",
+  "compatibility_date": "2026-07-17",
+  "assets": {
+    "directory": "./dist/public",
+    "not_found_handling": "404-page"
+  }
+}
+```
+
+Vocs pre-renders a `404.html`, so `404-page` handling serves it for unknown routes.
+
+## Deploy with the Wrangler CLI
+
+Install the [Wrangler CLI](https://developers.cloudflare.com/workers/wrangler/), then build and deploy:
+
+:::code-group
+```bash [npm]
+npm i -g wrangler
+npm run build
+wrangler deploy
+```
+```bash [pnpm]
+pnpm add -g wrangler
+pnpm build
+wrangler deploy
+```
+```bash [yarn]
+yarn global add wrangler
+yarn build
+wrangler deploy
+```
+:::
+
+The first run prompts you to log in and creates the Worker. The site is served at `<name>.<subdomain>.workers.dev` until you attach a [custom domain](https://developers.cloudflare.com/workers/configuration/routing/custom-domains/). Use `wrangler versions upload` to push a preview without touching production.
+
+## Deploy from Git
+
+Connect your repository with [Workers Builds](https://developers.cloudflare.com/workers/ci-cd/builds/) from the Cloudflare dashboard and use these settings:
+
+| Setting | Value |
+| --- | --- |
+| Build command | `pnpm build` (or `npm run build` / `yarn build`) |
+| Deploy command | `npx wrangler deploy` |
+
+Pushes to your production branch deploy live; other branches get [preview URLs](https://developers.cloudflare.com/workers/configuration/previews/).
+
+## Dynamic Sites
+
+Running the Vocs server (the `partial-static` or `dynamic` render strategies) on Cloudflare Workers is not supported yet — the build only emits Vercel, Netlify, and Node.js server entrypoints. If you need server features, deploy to one of those targets instead, or serve the [Node.js build](/deployment/node) on your own infrastructure.

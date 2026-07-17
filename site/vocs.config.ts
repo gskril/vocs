@@ -159,6 +159,7 @@ export default defineConfig({
       items: [
         { text: 'Vercel', link: '/deployment/vercel' },
         { text: 'Netlify', link: '/deployment/netlify' },
+        { text: 'Cloudflare', link: '/deployment/cloudflare' },
         { text: 'Node.js', link: '/deployment/node' },
       ],
     },
