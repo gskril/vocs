@@ -15,14 +15,21 @@ export { compose, openApi } from './openapi/handler.js'
  * `og().fetch` actually runs, so the indirection costs non-Vite consumers
  * nothing unless they call `Handler.og`.
  */
-async function loadOgAssets(): Promise<typeof import('./og-assets.js')> {
+// The Cloudflare variant (`og-assets.cloudflare.ts`, swapped in by the
+// `cloudflareRuntime()` plugin) exports `wasm` as a precompiled-module promise
+// rather than a `?url` string, so widen the type accordingly.
+type OgAssets = Omit<typeof import('./og-assets.js'), 'wasm'> & {
+  wasm: string | Promise<{ default: WebAssembly.Module }>
+}
+
+async function loadOgAssets(): Promise<OgAssets> {
   const modules = import.meta.glob('./og-assets.{js,ts}')
   const load = modules['./og-assets.js'] ?? modules['./og-assets.ts']
   if (!load)
     throw new Error(
       '[vocs] `Handler.og` requires the Vocs/Vite build pipeline (the OG image assets are Vite transforms).',
     )
-  return (await load()) as typeof import('./og-assets.js')
+  return (await load()) as OgAssets
 }
 
 type Handler = {
@@ -71,8 +78,14 @@ export function og(render: (props: og.Props) => React.JSX.Element): Handler {
 
       const element = render({ config, title, description, logo })
 
-      const wasmUrl = new URL(wasm, url.origin)
-      const module = await fetch(wasmUrl).then((r) => r.arrayBuffer())
+      // Node/Vercel/Netlify: `wasm` is a `?url` string — fetch the asset and
+      // compile from bytes. Cloudflare: the CF-only `og-assets` variant exports
+      // `wasm` as a `Promise<{ default: WebAssembly.Module }>` (workerd forbids
+      // compiling from bytes), forwarded straight to `ImageResponse`.
+      const module =
+        typeof wasm === 'string'
+          ? await fetch(new URL(wasm, url.origin)).then((r) => r.arrayBuffer())
+          : wasm
 
       try {
         return new ImageResponse(element, {

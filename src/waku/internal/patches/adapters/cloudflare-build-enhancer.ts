@@ -57,6 +57,16 @@ function patchWranglerConfig(filePath: string, options: BuildOptions) {
     // served straight from the ASSETS binding by the adapter's static middleware.
     config.run_worker_first = [`${options.basePath}*`, `!${options.basePath}${options.assetsDir}/*`]
     config.vars = { ...config.vars, NODE_ENV: 'production' }
+
+    // The OG handler's takumi wasm ships in the server bundle and must be
+    // uploaded as a CompiledWasm module — workerd forbids compiling wasm from
+    // bytes at runtime. Keep Waku's existing ESModule rule.
+    const rules: Array<{ type: string; globs: string[] }> = Array.isArray(config.rules)
+      ? config.rules
+      : []
+    if (!rules.some((rule) => rule.type === 'CompiledWasm'))
+      rules.push({ type: 'CompiledWasm', globs: ['**/*.wasm'] })
+    config.rules = rules
   }
 
   writeFileSync(filePath, `${JSON.stringify(config, null, 2)}\n`)

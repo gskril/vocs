@@ -116,6 +116,22 @@ export function cloudflareRuntime(): Plugin {
       if (importer?.startsWith(prefix)) return null
       if (id.startsWith(prefix)) return id
       if (bareName(id) in stubbed) return prefix + id
+      // Swap the OG asset module for its Cloudflare variant, which imports the
+      // takumi wasm as a CompiledWasm module instead of fetching + compiling
+      // bytes (forbidden on workerd). Only the `handlers` OG trampoline
+      // (`import.meta.glob('./og-assets.{js,ts}')`) imports it, always from the
+      // same directory, so the redirect is scoped to that importer.
+      if (
+        (id === './og-assets.js' || id === './og-assets.ts') &&
+        importer &&
+        /[\\/]server[\\/]handlers\.[jt]s$/.test(importer)
+      ) {
+        const dir = path.dirname(importer)
+        for (const ext of ['.js', '.ts']) {
+          const candidate = path.join(dir, `og-assets.cloudflare${ext}`)
+          if (existsSync(candidate)) return candidate
+        }
+      }
       return
     },
     load(id) {
