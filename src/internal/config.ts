@@ -619,7 +619,7 @@ export type Config<partial extends boolean = false> = MaybePartial<
     /**
      * Rendering strategy.
      *
-     * - `full-static`: Full static site generation. Compatible with: Netlify, Vercel.
+     * - `full-static`: Full static site generation. Compatible with: Netlify, Vercel, Cloudflare.
      * - `partial-static`: Partial static site (static pages; other routes are dynamic).
      * - `dynamic`: Dynamic site (all routes are dynamic).
      *

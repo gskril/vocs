@@ -4,61 +4,54 @@ outline: 2
 
 # Cloudflare [Deploy your Vocs site to Cloudflare Workers]
 
-Vocs doesn't ship a Cloudflare adapter yet, so deploy as a fully static site served by [Workers static assets](https://developers.cloudflare.com/workers/static-assets/). Features that need a server runtime — dynamic OG images, page feedback, MCP, and custom API routes — are disabled in this mode (see [SSG or SSR](/features/render-strategies)).
-
-## Configure for Static Output
-
-Set the render strategy to `full-static` and provide a static `ogImageUrl`, since the dynamic `/api/og` endpoint won't exist:
-
-```ts [vocs.config.ts]
-import { defineConfig } from 'vocs/config'
-
-export default defineConfig({
-  renderStrategy: 'full-static', // [!code focus]
-  ogImageUrl: '/og-default.png', // [!code focus]
-})
-```
-
-## Add a Wrangler Config
-
-Commit a `wrangler.jsonc` to the project root that points Workers at the static build output:
-
-```jsonc [wrangler.jsonc]
-{
-  "name": "my-docs",
-  "compatibility_date": "2026-07-17",
-  "assets": {
-    "directory": "./dist/public",
-    "not_found_handling": "404-page"
-  }
-}
-```
-
-Vocs pre-renders a `404.html`, so `404-page` handling serves it for unknown routes.
+Vocs selects a Cloudflare Workers adapter when `CLOUDFLARE=1` is set at build time (or automatically in [Workers Builds](https://developers.cloudflare.com/workers/ci-cd/builds/) CI, where `WORKERS_CI` is present). All render strategies are supported — `dynamic`, `partial-static`, and `full-static` — including markdown negotiation and dynamic OG images. No changes to `vocs.config.ts` are required.
 
 ## Deploy with the Wrangler CLI
 
-Install the [Wrangler CLI](https://developers.cloudflare.com/workers/wrangler/), then build and deploy:
+Install the [Wrangler CLI](https://developers.cloudflare.com/workers/wrangler/), then build with `CLOUDFLARE=1` and deploy:
 
 :::code-group
 ```bash [npm]
 npm i -g wrangler
-npm run build
+CLOUDFLARE=1 npm run build
 wrangler deploy
 ```
 ```bash [pnpm]
 pnpm add -g wrangler
-pnpm build
+CLOUDFLARE=1 pnpm build
 wrangler deploy
 ```
 ```bash [yarn]
 yarn global add wrangler
-yarn build
+CLOUDFLARE=1 yarn build
 wrangler deploy
 ```
 :::
 
-The first run prompts you to log in and creates the Worker. The site is served at `<name>.<subdomain>.workers.dev` until you attach a [custom domain](https://developers.cloudflare.com/workers/configuration/routing/custom-domains/). Use `wrangler versions upload` to push a preview without touching production.
+The build emits a ready-to-deploy Wrangler config, so `wrangler deploy` works with no extra setup. The first run prompts you to log in and creates the Worker. The site is served at `<name>.<subdomain>.workers.dev` until you attach a [custom domain](https://developers.cloudflare.com/workers/configuration/routing/custom-domains/).
+
+### Custom Wrangler config
+
+If you commit a `wrangler.jsonc` (or `wrangler.toml`) to your project root, Vocs respects it: your `name`, `compatibility_date`, and `compatibility_flags` are read from it, and the build never overwrites your file. Only the build-emitted config under `dist/server` is patched to guarantee the runtime requirements (`nodejs_compat` and a recent enough `compatibility_date` so `process.env` is populated from your vars and secrets).
+
+### Local preview
+
+Run a build, then preview the Worker locally with `wrangler dev`:
+
+:::code-group
+```bash [npm]
+CLOUDFLARE=1 npm run build
+wrangler dev
+```
+```bash [pnpm]
+CLOUDFLARE=1 pnpm build
+wrangler dev
+```
+```bash [yarn]
+CLOUDFLARE=1 yarn build
+wrangler dev
+```
+:::
 
 ## Deploy from Git
 
@@ -66,11 +59,28 @@ Connect your repository with [Workers Builds](https://developers.cloudflare.com/
 
 | Setting | Value |
 | --- | --- |
-| Build command | `pnpm build` (or `npm run build` / `yarn build`) |
+| Build command | `CLOUDFLARE=1 pnpm build` |
 | Deploy command | `npx wrangler deploy` |
 
-Pushes to your production branch deploy live; other branches get [preview URLs](https://developers.cloudflare.com/workers/configuration/previews/).
+Workers Builds sets `WORKERS_CI` automatically, so a plain `pnpm build` also selects the Cloudflare adapter — the explicit `CLOUDFLARE=1` just makes the intent clear and works everywhere. Pushes to your production branch deploy live; other branches get [preview URLs](https://developers.cloudflare.com/workers/configuration/previews/).
 
-## Dynamic Sites
+## Environment Variables
 
-Running the Vocs server (the `partial-static` or `dynamic` render strategies) on Cloudflare Workers is not supported yet — the build only emits Vercel, Netlify, and Node.js server entrypoints. If you need server features, deploy to one of those targets instead, or serve the [Node.js build](/deployment/node) on your own infrastructure.
+Runtime variables and secrets (for example `SLACK_FEEDBACK_WEBHOOK` or `GITHUB_TOKEN`) must be set as [Wrangler vars and secrets](https://developers.cloudflare.com/workers/configuration/environment-variables/). The `nodejs_compat` flag — which Vocs enables automatically — exposes them on `process.env` at request time. `NODE_ENV=production` is emitted into the generated config automatically.
+
+## Full-static Sites
+
+With `renderStrategy: 'full-static'` the build ships no Worker — just [Workers static assets](https://developers.cloudflare.com/workers/static-assets/). The emitted config has no `main`, `run_worker_first`, or `vars`, and `wrangler deploy` uploads the prerendered site directly.
+
+## OG Images
+
+Dynamic OG images from the `/api/og` endpoint are supported — the Takumi WASM renderer is uploaded as a compiled Worker module, so no static `ogImageUrl` fallback is required.
+
+## Limitations
+
+Cloudflare Workers is a serverless runtime with no persistent filesystem, so a few features degrade or are unavailable at runtime:
+
+- **MCP page tools** — `list_pages` and `read_page` read your source page tree, which is not present on Workers. These tools degrade gracefully; markdown negotiation and search still work.
+- **Shell-based features** — anything that shells out at runtime (Rust twoslash, git-based changelog metadata) is a no-op. Twoslash still runs at build time.
+- **Worker size limits** — Workers are capped at 3 MB (free) / 10 MB (paid), gzipped. Vocs automatically compresses the largest artifact (the build metadata), but very large sites may still exceed the paid limit.
+- **AI search index** — bake the search index at build time (the default) or point search at a remote vector store; the runtime index build fallback relies on the filesystem and is unavailable on Workers.

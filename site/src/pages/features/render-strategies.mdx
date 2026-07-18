@@ -75,7 +75,7 @@ Use this when content varies per request or you need edge-side personalization.
 
 - **Default to `partial-static` for production.** You get static speed plus the dynamic features without thinking about it.
 - **Switching from `dynamic` → `full-static` will break OG images** unless you supply a static `ogImageUrl`. Test the build locally with `vocs preview` first.
-- **Deployment adapters auto-detect strategy.** Vercel and Netlify adapters configure functions only when the strategy needs them — no manual config required.
+- **Deployment adapters auto-detect strategy.** Vercel, Netlify, and Cloudflare adapters configure functions only when the strategy needs them — no manual config required.
 
 ## Reference
 
@@ -93,7 +93,7 @@ Use this when content varies per request or you need edge-side personalization.
 <Cards>
   <Card
     title="Deployment"
-    description="Platform-specific guides for Vercel, Netlify, and Node.js."
+    description="Platform-specific guides for Vercel, Netlify, Cloudflare, and Node.js."
     icon="rocket"
     to="/deployment/vercel"
   />

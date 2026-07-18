@@ -39,7 +39,7 @@ const rootWranglerFiles = ['wrangler.toml', 'wrangler.json', 'wrangler.jsonc']
  * `DecompressionStream` at import time is rejected — `gunzipSync` is pure CPU
  * and is allowed.
  */
-function compressBuildMetadata(serverDir: string) {
+export function compressBuildMetadata(serverDir: string) {
   const json = readBuildMetadataJson(serverDir)
   if (!json) return
   writeFileSync(path.join(serverDir, BUILD_METADATA_GZ_FILE), gzipSync(json, { level: 9 }))
@@ -66,7 +66,7 @@ function compressBuildMetadata(serverDir: string) {
  *
  * Only ever called on build-emitted JSON files — never a user's own config.
  */
-function patchWranglerConfig(filePath: string, options: BuildOptions) {
+export function patchWranglerConfig(filePath: string, options: BuildOptions) {
   const config = JSON.parse(readFileSync(filePath, 'utf-8'))
 
   const flags = new Set<string>(
