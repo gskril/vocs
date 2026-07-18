@@ -1,8 +1,14 @@
 import { existsSync, readFileSync, writeFileSync } from 'node:fs'
 import path from 'node:path'
+import { gzipSync } from 'node:zlib'
 import wakuBuildEnhancer, {
   type BuildOptions as WakuBuildOptions,
 } from 'waku/adapters/cloudflare-build-enhancer'
+import {
+  BUILD_METADATA_FILE,
+  BUILD_METADATA_GZ_FILE,
+  readBuildMetadataJson,
+} from '../utils/build-metadata.js'
 
 export type BuildOptions = {
   srcDir: string
@@ -19,6 +25,34 @@ const MIN_COMPATIBILITY_DATE = '2025-04-01'
 // Vocs needs full `nodejs_compat`; Waku's default `nodejs_als` is insufficient.
 const REQUIRED_COMPATIBILITY_FLAG = 'nodejs_compat'
 const rootWranglerFiles = ['wrangler.toml', 'wrangler.json', 'wrangler.jsonc']
+
+/**
+ * Rewrites Waku's build metadata (inlined RSC payloads, tens of MB — they
+ * scale with the site and bloat the uploaded Worker) into a gzipped sidecar
+ * plus a workerd-safe loader. The sidecar is uploaded as a wrangler Data
+ * module (see the `Data` rule in `patchWranglerConfig`), which exports its
+ * bytes as an `ArrayBuffer`; the loader decompresses them with `node:zlib`
+ * (available under the `nodejs_compat` flag the enhancer already emits) so
+ * `buildMetadata` is a plain `Map` when `handler.js`'s top-level
+ * `import { buildMetadata }` resolves. Decompression must be synchronous:
+ * workerd forbids asynchronous I/O in module global scope, so a streaming
+ * `DecompressionStream` at import time is rejected — `gunzipSync` is pure CPU
+ * and is allowed.
+ */
+function compressBuildMetadata(serverDir: string) {
+  const json = readBuildMetadataJson(serverDir)
+  if (!json) return
+  writeFileSync(path.join(serverDir, BUILD_METADATA_GZ_FILE), gzipSync(json, { level: 9 }))
+  writeFileSync(
+    path.join(serverDir, BUILD_METADATA_FILE),
+    [
+      `import { gunzipSync } from 'node:zlib';`,
+      `import compressed from './${BUILD_METADATA_GZ_FILE}';`,
+      `export const buildMetadata = new Map(JSON.parse(gunzipSync(new Uint8Array(compressed)).toString('utf8')));`,
+      '',
+    ].join('\n'),
+  )
+}
 
 /**
  * Applies the Vocs deltas to a wrangler config emitted by Waku's enhancer:
@@ -60,12 +94,16 @@ function patchWranglerConfig(filePath: string, options: BuildOptions) {
 
     // The OG handler's takumi wasm ships in the server bundle and must be
     // uploaded as a CompiledWasm module — workerd forbids compiling wasm from
-    // bytes at runtime. Keep Waku's existing ESModule rule.
+    // bytes at runtime. The compressed build-metadata sidecar ships as a Data
+    // module so the loader can import its bytes as an ArrayBuffer. Keep Waku's
+    // existing ESModule rule.
     const rules: Array<{ type: string; globs: string[] }> = Array.isArray(config.rules)
       ? config.rules
       : []
     if (!rules.some((rule) => rule.type === 'CompiledWasm'))
       rules.push({ type: 'CompiledWasm', globs: ['**/*.wasm'] })
+    if (!rules.some((rule) => rule.type === 'Data'))
+      rules.push({ type: 'Data', globs: ['**/*.json.gz'] })
     config.rules = rules
   }
 
@@ -87,6 +125,10 @@ export default async function buildEnhancer(
     const rootWranglerBefore = rootWranglerFiles.some((file) => existsSync(path.resolve(file)))
 
     await wakuEnhanced(utils, options)
+
+    // Runs after the wrapped build (SSG has already consumed the original
+    // module). Only serverless builds ship a Worker; full-static ones don't.
+    if (options.serverless) compressBuildMetadata(path.resolve(options.distDir, 'server'))
 
     if (!rootWranglerBefore) {
       const emitted = rootWranglerFiles.find((file) => existsSync(path.resolve(file)))
