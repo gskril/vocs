@@ -30,16 +30,33 @@ async function resolveContent() {
   })
 }
 
-export async function fetchMarkdown(url: URL, assetPath: string, cookie?: string) {
-  // Try reading from disk first (avoids self-fetch issues with deployment protection).
-  try {
-    const fs = await import('node:fs/promises')
-    const path = await import('node:path')
-    const { fileURLToPath } = await import('node:url')
-    const distDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
-    const filePath = path.join(distDir, 'public', assetPath.replace(/^\//, ''))
-    return await fs.readFile(filePath, 'utf-8')
-  } catch {}
+/** Workers Assets binding (`env.ASSETS`), present only on Cloudflare Workers. */
+type AssetsBinding = { fetch: (request: Request) => Promise<Response> }
+
+export async function fetchMarkdown(
+  url: URL,
+  assetPath: string,
+  cookie?: string,
+  assets?: AssetsBinding,
+) {
+  if (assets) {
+    // Workers: no disk. Serve twins from the ASSETS binding, which reads the
+    // static output directly without re-invoking the Worker.
+    try {
+      const response = await assets.fetch(new Request(new URL(assetPath, url.origin)))
+      if (response.ok) return await response.text()
+    } catch {}
+  } else {
+    // Node: read from disk first (avoids self-fetch issues with deployment protection).
+    try {
+      const fs = await import('node:fs/promises')
+      const path = await import('node:path')
+      const { fileURLToPath } = await import('node:url')
+      const distDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
+      const filePath = path.join(distDir, 'public', assetPath.replace(/^\//, ''))
+      return await fs.readFile(filePath, 'utf-8')
+    } catch {}
+  }
 
   // Fall back to HTTP fetch, forwarding cookies for auth-protected deployments.
   const assetUrl = new URL(assetPath, url.origin)
@@ -50,10 +67,22 @@ export async function fetchMarkdown(url: URL, assetPath: string, cookie?: string
   return response.text()
 }
 
-/** Whether an exact file for `pathname` exists in the `public/` (dev) or static output (build) directory. */
-async function hasPublicFile(pathname: string) {
-  const relativePath = pathname.replace(/^\//, '')
+/** Whether an exact file for `url.pathname` exists in the `public/` (dev) or static output (build) directory. */
+async function hasPublicFile(url: URL, assets?: AssetsBinding) {
+  const relativePath = url.pathname.replace(/^\//, '')
   if (!relativePath) return false
+
+  if (assets) {
+    // Workers: the ASSETS binding serves the static output; a hit means the file
+    // physically exists (twins live under `/assets/md/`, never at the clean path).
+    try {
+      const response = await assets.fetch(new Request(new URL(url.pathname, url.origin)))
+      return response.ok
+    } catch {
+      return false
+    }
+  }
+
   try {
     const fs = await import('node:fs/promises')
     const path = await import('node:path')
@@ -80,6 +109,10 @@ export function middleware(): MiddlewareHandler {
   return async (context, next) => {
     const url = new URL(context.req.url)
 
+    // On Cloudflare Workers, twins and physical `public/` files are read through
+    // the Workers Assets binding rather than from disk.
+    const assets = (context.env as { ASSETS?: AssetsBinding } | undefined)?.ASSETS
+
     // Generated markdown twins are static output; routing them back through
     // twin resolution would trigger a recursive self-fetch.
     if (url.pathname.startsWith('/assets/md/')) return next()
@@ -100,7 +133,7 @@ export function middleware(): MiddlewareHandler {
         const content = await resolveContent()
         text = content.short
       } else {
-        text = await fetchMarkdown(url, '/llms.txt', context.req.header('cookie'))
+        text = await fetchMarkdown(url, '/llms.txt', context.req.header('cookie'), assets)
       }
       if (!text) return next()
 
@@ -116,7 +149,7 @@ export function middleware(): MiddlewareHandler {
 
     // A file physically present in `public/` wins over markdown-twin resolution,
     // so static `.md` files (skill manifests, plain markdown) are served as-is.
-    if (isMarkdownRequest && (await hasPublicFile(url.pathname))) return next()
+    if (isMarkdownRequest && (await hasPublicFile(url, assets))) return next()
 
     // Static assets (`.json`, `.svg`, `.png`, ...) have no markdown twin. Skip
     // twin resolution so a disk miss never falls back to a slow self-fetch.
@@ -139,7 +172,7 @@ export function middleware(): MiddlewareHandler {
       const assetPath = url.pathname.endsWith('.md')
         ? `/assets/md${url.pathname}`
         : `/assets/md${url.pathname}.md`
-      text = await fetchMarkdown(url, assetPath, context.req.header('cookie'))
+      text = await fetchMarkdown(url, assetPath, context.req.header('cookie'), assets)
     }
     if (!text) return next()
 

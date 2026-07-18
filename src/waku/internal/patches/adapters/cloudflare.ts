@@ -84,9 +84,6 @@ const adapter: typeof import('waku/adapters/cloudflare').default = createServerE
     // Mirrors the Node adapter: Vocs needs mdRouter to run first for
     // partial-static clean URLs that negotiate `text/markdown`. On Workers,
     // static assets are served by Workers Assets before the Worker runs.
-    // TODO(phase-b): add the ASSETS-proxy static middleware between this block
-    // and the general middleware runner, plus `run_worker_first` globs so page
-    // routes reach the Worker while `/assets/*` stays asset-served.
     if (isBuild && typedMiddlewareModules['mdRouter']) {
       const mdRouterMiddleware = middlewareRunner(
         {
@@ -103,6 +100,25 @@ const adapter: typeof import('waku/adapters/cloudflare').default = createServerE
       })
     }
 
+    // Node's adapter serves the prerendered static output from disk here (before
+    // the RSC middleware). On Workers the equivalent output lives in Workers
+    // Assets: `run_worker_first` routes page URLs to the Worker (so mdRouter can
+    // negotiate markdown), so the Worker must serve their prerendered HTML itself.
+    // The ASSETS binding reads the asset store directly and never re-invokes the
+    // Worker, so this can't loop; a 404 falls through to dynamic RSC rendering.
+    if (isBuild) {
+      app.use(`${config.basePath}*`, async (context, next) => {
+        if (context.req.method !== 'GET' && context.req.method !== 'HEAD') return next()
+        const assets = (
+          context.env as { ASSETS?: { fetch: (request: Request) => Promise<Response> } } | undefined
+        )?.ASSETS
+        if (!assets) return next()
+        const res = await assets.fetch(context.req.raw)
+        if (res.status === 404) return next()
+        return res
+      })
+    }
+
     if (bodyLimitOptions !== false)
       app.use(bodyLimit(bodyLimitOptions ?? { maxSize: DEFAULT_BODY_LIMIT_MAX_SIZE }))
     for (const middlewareFn of middlewareFns) app.use(middlewareFn({ app }))
@@ -114,6 +130,8 @@ const adapter: typeof import('waku/adapters/cloudflare').default = createServerE
       distDir: config.distDir,
       DIST_PUBLIC,
       serverless: !options?.static,
+      basePath: config.basePath,
+      assetsDir: options?.assetsDir || 'assets',
     }
 
     const buildBody = () =>

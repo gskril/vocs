@@ -44,7 +44,17 @@ export function deserializeFunctions(value: any): any {
     }, {})
   }
   if (typeof value === 'string' && value.includes('_vocs-fn_')) {
-    return new Function(`return ${value.slice(9)}`)()
+    try {
+      return new Function(`return ${value.slice(9)}`)()
+    } catch {
+      // Cloudflare Workers (workerd) forbids dynamic code generation, so a
+      // serialized function can't be reconstructed. The functions carried in the
+      // public config are server tooling (e.g. MCP source handlers) that aren't
+      // invoked while rendering a page, so defer the failure to an actual call.
+      return () => {
+        throw new Error('vocs: serialized config functions are unavailable on Cloudflare Workers')
+      }
+    }
   }
   return value
 }

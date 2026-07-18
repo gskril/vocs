@@ -64,6 +64,7 @@ export async function vocs(options: vocs.Options = {}): Promise<PluginOption[]> 
     Plugins.fsRouterTypegen(wakuConfig),
     Plugins.preview(),
     Plugins.vocsConfig(config),
+    ...(unstable_adapter === CLOUDFLARE_ADAPTER ? [Plugins.cloudflareRuntime()] : []),
   ]
 }
 

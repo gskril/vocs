@@ -1,12 +1,16 @@
 import { existsSync, readFileSync, writeFileSync } from 'node:fs'
 import path from 'node:path'
-import wakuBuildEnhancer from 'waku/adapters/cloudflare-build-enhancer'
+import wakuBuildEnhancer, {
+  type BuildOptions as WakuBuildOptions,
+} from 'waku/adapters/cloudflare-build-enhancer'
 
 export type BuildOptions = {
   srcDir: string
   distDir: string
   DIST_PUBLIC: string
   serverless: boolean
+  basePath: string
+  assetsDir: string
 }
 
 // nodejs_compat populates `process.env` from vars/secrets only from this date
@@ -18,11 +22,17 @@ const rootWranglerFiles = ['wrangler.toml', 'wrangler.json', 'wrangler.jsonc']
 
 /**
  * Applies the Vocs deltas to a wrangler config emitted by Waku's enhancer:
- * ensures `nodejs_compat` is present (merged with existing flags) and the
- * compatibility date is recent enough. Only ever called on build-emitted JSON
- * files — never a user's own config.
+ * - ensures `nodejs_compat` is present (merged with existing flags) and the
+ *   compatibility date is recent enough;
+ * - for a config that ships a Worker (serverless), routes page URLs to the
+ *   Worker first (so mdRouter can negotiate markdown and the Worker can serve
+ *   prerendered HTML) while keeping the hashed `/assets/*` output — chunks,
+ *   styles and markdown twins — asset-served without invoking the Worker, and
+ *   pins `NODE_ENV=production` for any runtime `process.env` reads.
+ *
+ * Only ever called on build-emitted JSON files — never a user's own config.
  */
-function patchWranglerConfig(filePath: string) {
+function patchWranglerConfig(filePath: string, options: BuildOptions) {
   const config = JSON.parse(readFileSync(filePath, 'utf-8'))
 
   const flags = new Set<string>(
@@ -37,15 +47,29 @@ function patchWranglerConfig(filePath: string) {
   )
     config.compatibility_date = MIN_COMPATIBILITY_DATE
 
+  // Full-static configs ship no Worker (no `main`); routing/vars are meaningless
+  // and Workers Assets serves everything directly.
+  if (options.serverless && config.main) {
+    // `basePath` already ends with `/`. Everything is Worker-first except the
+    // hashed asset directory. Top-level `public/` files (favicons, llms.txt,
+    // SKILL.md) share the URL space with prerendered page HTML, which must reach
+    // the Worker for markdown negotiation, so they are Worker-first too and are
+    // served straight from the ASSETS binding by the adapter's static middleware.
+    config.run_worker_first = [`${options.basePath}*`, `!${options.basePath}${options.assetsDir}/*`]
+    config.vars = { ...config.vars, NODE_ENV: 'production' }
+  }
+
   writeFileSync(filePath, `${JSON.stringify(config, null, 2)}\n`)
 }
 
-// TODO(phase-b): emit `run_worker_first` globs (worker-first for page routes,
-// asset-served for `/assets/*`) so partial-static clean URLs reach mdRouter.
 export default async function buildEnhancer(
   build: (utils: unknown, options: BuildOptions) => Promise<void>,
 ): Promise<typeof build> {
-  const wakuEnhanced = await wakuBuildEnhancer(build)
+  // Waku's enhancer type omits `basePath`/`assetsDir` (the Vocs adapter passes
+  // them through at runtime); the wrapped `build` is structurally compatible.
+  const wakuEnhanced = (await wakuBuildEnhancer(
+    build as (utils: unknown, options: WakuBuildOptions) => Promise<void>,
+  )) as unknown as typeof build
 
   return async (utils: unknown, options: BuildOptions) => {
     // Waku respects a user's own root wrangler config and only writes one when
@@ -56,10 +80,10 @@ export default async function buildEnhancer(
 
     if (!rootWranglerBefore) {
       const emitted = rootWranglerFiles.find((file) => existsSync(path.resolve(file)))
-      if (emitted) patchWranglerConfig(path.resolve(emitted))
+      if (emitted) patchWranglerConfig(path.resolve(emitted), options)
     }
 
     const distServerWrangler = path.resolve(options.distDir, 'server', 'wrangler.json')
-    if (existsSync(distServerWrangler)) patchWranglerConfig(distServerWrangler)
+    if (existsSync(distServerWrangler)) patchWranglerConfig(distServerWrangler, options)
   }
 }

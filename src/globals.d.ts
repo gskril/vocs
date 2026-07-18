@@ -16,6 +16,11 @@ declare module 'virtual:vocs/config' {
   export const config: import('./config.js').Config
 }
 
+declare module 'virtual:vocs/server-config' {
+  const config: Record<string, unknown>
+  export default config
+}
+
 declare module 'virtual:vocs/langs' {
   export const langs: import('shiki').LanguageRegistration[]
 }

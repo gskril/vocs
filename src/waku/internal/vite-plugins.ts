@@ -45,6 +45,97 @@ export function buildId(): Plugin {
 }
 
 /**
+ * Cloudflare/workerd runtime fixups, applied only when the Cloudflare adapter is
+ * selected. Two workerd realities the Node/Vercel targets don't have:
+ *
+ * 1. `import.meta.url` is `undefined` for uploaded (`no_bundle`) modules, so the
+ *    rolldown CJS-interop helper `createRequire(import.meta.url)` — evaluated at
+ *    module load in the server entry — throws at boot. Pin it to a valid URL; the
+ *    resulting `require` is only ever called by CJS deps that aren't on the
+ *    request hot path.
+ * 2. `nodejs_compat` doesn't provide `child_process`, `vm`, or `worker_threads`.
+ *    They're pulled in by build-time/optional tooling (the rust twoslash
+ *    highlighter and git metadata shell out; the OpenAPI parser evaluates `vm`
+ *    and spins a worker thread), imported at module load in chunks that the
+ *    request path touches (the config bundle on every request; the OpenAPI
+ *    chunks when Waku registers routes). The stub delegates to the real builtin
+ *    when it can be imported — which the Node SSG pass needs, since it executes
+ *    those modules for real — and falls back to a workerd-safe shim otherwise.
+ *    Their functions are never reached by core page routes at runtime.
+ */
+export function cloudflareRuntime(): Plugin {
+  // bare builtin name -> named exports the shim must provide (default is always
+  // exported). Missing a name is a build error, so cover every binding imported.
+  const stubbed: Record<string, string[]> = {
+    child_process: ['spawn', 'spawnSync', 'exec', 'execSync', 'execFile', 'execFileSync', 'fork'],
+    vm: ['Script', 'createContext', 'runInNewContext', 'runInThisContext', 'compileFunction'],
+    worker_threads: ['Worker', 'isMainThread', 'parentPort', 'workerData', 'threadId'],
+  }
+  const prefix = '\0vocs:cf-node-stub:'
+  const bareName = (id: string) => (id.startsWith('node:') ? id.slice(5) : id)
+
+  function stubModule(spec: string) {
+    const bare = bareName(spec)
+    const names = stubbed[bare] ?? []
+    // Shim values used only on workerd, where these APIs aren't reached: enough
+    // structure to load (a no-op `vm.Script`, `worker_threads.isMainThread`) and
+    // throwing functions everywhere else.
+    const shim: Record<string, string> = {
+      Script:
+        'class { constructor() {} runInContext() {} runInNewContext() {} runInThisContext() {} }',
+      createContext: '(ctx) => ctx ?? {}',
+      isMainThread: 'true',
+      parentPort: 'null',
+      workerData: 'null',
+      threadId: '0',
+      Worker: `class { constructor() { throw new Error('worker_threads is unavailable on Cloudflare Workers') } }`,
+    }
+    const lines = [
+      'let real = {}',
+      // Delegated back to the real builtin (see resolveId); resolves on Node, rejects on workerd.
+      `try { real = await import(${JSON.stringify(spec)}) } catch {}`,
+      'const mod = real.default ?? real',
+    ]
+    for (const name of names) {
+      const fallback =
+        shim[name] ?? `(() => { throw new Error('${name} is unavailable on Cloudflare Workers') })`
+      lines.push(`export const ${name} = mod.${name} ?? (${fallback})`)
+    }
+    lines.push(
+      `export default (mod && (${names.map((n) => `mod.${n}`).join(' ?? ') || 'false'}) ? mod : { ${names.join(', ')} })`,
+    )
+    return `${lines.join('\n')}\n`
+  }
+
+  return {
+    name: 'vocs:cloudflare-runtime',
+    // Resolve before Vite externalizes the Node builtins in the server envs.
+    enforce: 'pre',
+    resolveId(id, importer) {
+      // The stub's own delegated `import()` must reach the real builtin.
+      if (importer?.startsWith(prefix)) return null
+      if (id.startsWith(prefix)) return id
+      if (bareName(id) in stubbed) return prefix + id
+      return
+    },
+    load(id) {
+      if (!id.startsWith(prefix)) return
+      return stubModule(id.slice(prefix.length))
+    },
+    renderChunk(code) {
+      if (!code.includes('createRequire(import.meta.url)')) return null
+      return {
+        code: code.replaceAll(
+          'createRequire(import.meta.url)',
+          'createRequire("file:///worker.js")',
+        ),
+        map: null,
+      }
+    },
+  }
+}
+
+/**
  * Keeps `react-server-dom-webpack` bundled in the server environments so Waku's rsdw
  * patch can redirect it to plugin-rsc's vendored build. npm and bun auto-install the
  * peer, which would otherwise load natively with `react` missing the `react-server`
@@ -250,18 +341,23 @@ if (import.meta.hot)
 }
 
 /**
- * Bundles vocs.config.ts into the server build output.
- * Only runs during RSC environment build.
+ * Bundles vocs.config.ts into the server build output via the
+ * `virtual:vocs/server-config` module that `Config.resolve` imports in production.
  */
 export function vocsConfig(config: VocsConfig.Config): Plugin {
   const configFile = VocsConfig.getConfigFile({ rootDir: config.rootDir })
   const configPath = configFile ? path.resolve(config.rootDir, configFile) : undefined
   const configDir = configPath ? path.dirname(configPath) : undefined
 
+  // Backs `import('virtual:vocs/server-config')` in `Config.resolve` so the
+  // server bundle reaches the emitted config through a statically analyzable
+  // specifier (works on Node/Vercel and on workerd, which cannot import a
+  // runtime-computed absolute path).
+  const serverConfigId = 'virtual:vocs/server-config'
+  const resolvedServerConfigId = `\0${serverConfigId}`
+
   // Track files directly imported by the config to bundle together
   const imports = new Set<string>()
-
-  let isBuild = false
 
   return {
     name: 'vocs:config-bundle',
@@ -290,6 +386,7 @@ export function vocsConfig(config: VocsConfig.Config): Plugin {
     },
     // Track which local files the config imports (e.g. sidebar.ts)
     resolveId(source, importer) {
+      if (source === serverConfigId) return resolvedServerConfigId
       if (!configPath || !configDir || !importer) return null
       // If the importer is the config file and source is a relative import
       if (importer === configPath && source.startsWith('./')) {
@@ -305,19 +402,10 @@ export function vocsConfig(config: VocsConfig.Config): Plugin {
       }
       return null
     },
-    configResolved(resolvedConfig) {
-      isBuild = resolvedConfig.command === 'build'
-    },
-    buildStart() {
-      if (!isBuild || !configPath) return
-      const envName = (this as unknown as { environment?: { name: string } }).environment?.name
-      if (envName !== 'rsc') return
-
-      this.emitFile({
-        type: 'chunk',
-        id: configPath,
-        fileName: 'vocs.config.js',
-      })
+    load(id) {
+      if (id !== resolvedServerConfigId) return
+      if (!configPath) return 'export default {}'
+      return `export { default } from ${JSON.stringify(configPath)}`
     },
   }
 }
