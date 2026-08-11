@@ -3,8 +3,8 @@ import path from 'node:path'
 import { gzipSync } from 'node:zlib'
 import { aiUserAgents, terminalUserAgents } from '../../../../internal/markdown-negotiation.js'
 import {
+  BUILD_METADATA_COMPRESSED_FILE,
   BUILD_METADATA_FILE,
-  BUILD_METADATA_GZ_FILE,
   readBuildMetadataJson,
 } from '../utils/build-metadata.js'
 
@@ -29,13 +29,13 @@ function escapeRegExp(value: string) {
 function compressBuildMetadata(serverDir: string) {
   const json = readBuildMetadataJson(serverDir)
   if (!json) return
-  writeFileSync(path.join(serverDir, BUILD_METADATA_GZ_FILE), gzipSync(json, { level: 9 }))
+  writeFileSync(path.join(serverDir, BUILD_METADATA_COMPRESSED_FILE), gzipSync(json, { level: 9 }))
   writeFileSync(
     path.join(serverDir, BUILD_METADATA_FILE),
     [
       `import { readFileSync } from 'node:fs';`,
       `import { gunzipSync } from 'node:zlib';`,
-      `export const buildMetadata = new Map(JSON.parse(gunzipSync(readFileSync(new URL('./${BUILD_METADATA_GZ_FILE}', import.meta.url))).toString('utf8')));`,
+      `export const buildMetadata = new Map(JSON.parse(gunzipSync(readFileSync(new URL('./${BUILD_METADATA_COMPRESSED_FILE}', import.meta.url))).toString('utf8')));`,
       '',
     ].join('\n'),
   )

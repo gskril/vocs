@@ -7,7 +7,7 @@ import path from 'node:path'
 // grow with the site and can reach tens of MB, so adapters rewrite it into a
 // compressed sidecar plus a tiny loader.
 export const BUILD_METADATA_FILE = '__waku_build_metadata.js'
-export const BUILD_METADATA_GZ_FILE = '__waku_build_metadata.json.gz'
+export const BUILD_METADATA_COMPRESSED_FILE = '__waku_build_metadata.bin'
 
 /**
  * Reads and validates Waku's emitted build metadata module, returning the raw

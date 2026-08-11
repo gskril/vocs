@@ -5,8 +5,8 @@ import wakuBuildEnhancer, {
   type BuildOptions as WakuBuildOptions,
 } from 'waku/adapters/cloudflare-build-enhancer'
 import {
+  BUILD_METADATA_COMPRESSED_FILE,
   BUILD_METADATA_FILE,
-  BUILD_METADATA_GZ_FILE,
   readBuildMetadataJson,
 } from '../utils/build-metadata.js'
 
@@ -42,12 +42,12 @@ const rootWranglerFiles = ['wrangler.toml', 'wrangler.json', 'wrangler.jsonc']
 export function compressBuildMetadata(serverDir: string) {
   const json = readBuildMetadataJson(serverDir)
   if (!json) return
-  writeFileSync(path.join(serverDir, BUILD_METADATA_GZ_FILE), gzipSync(json, { level: 9 }))
+  writeFileSync(path.join(serverDir, BUILD_METADATA_COMPRESSED_FILE), gzipSync(json, { level: 9 }))
   writeFileSync(
     path.join(serverDir, BUILD_METADATA_FILE),
     [
       `import { gunzipSync } from 'node:zlib';`,
-      `import compressed from './${BUILD_METADATA_GZ_FILE}';`,
+      `import compressed from './${BUILD_METADATA_COMPRESSED_FILE}';`,
       `export const buildMetadata = new Map(JSON.parse(gunzipSync(new Uint8Array(compressed)).toString('utf8')));`,
       '',
     ].join('\n'),
@@ -56,9 +56,9 @@ export function compressBuildMetadata(serverDir: string) {
 
 /**
  * Applies the Vocs deltas to a wrangler config emitted by Waku's enhancer:
- * - ensures `nodejs_compat` is present (merged with existing flags) and the
- *   compatibility date is recent enough;
- * - for a config that ships a Worker (serverless), routes page URLs to the
+ * - for a config that ships a Worker (serverless), ensures `nodejs_compat` is
+ *   present (merged with existing flags) and the compatibility date is recent
+ *   enough, then routes page URLs to the
  *   Worker first (so mdRouter can negotiate markdown and the Worker can serve
  *   prerendered HTML) while keeping the hashed `/assets/*` output — chunks,
  *   styles and markdown twins — asset-served without invoking the Worker, and
@@ -69,42 +69,38 @@ export function compressBuildMetadata(serverDir: string) {
 export function patchWranglerConfig(filePath: string, options: BuildOptions) {
   const config = JSON.parse(readFileSync(filePath, 'utf-8'))
 
-  const flags = new Set<string>(
-    Array.isArray(config.compatibility_flags) ? config.compatibility_flags : [],
-  )
-  flags.add(REQUIRED_COMPATIBILITY_FLAG)
-  config.compatibility_flags = [...flags]
-
-  if (
-    typeof config.compatibility_date !== 'string' ||
-    config.compatibility_date < MIN_COMPATIBILITY_DATE
-  )
-    config.compatibility_date = MIN_COMPATIBILITY_DATE
-
-  // Full-static configs ship no Worker (no `main`); routing/vars are meaningless
-  // and Workers Assets serves everything directly.
+  // Full-static configs ship no Worker (no `main`); Worker compatibility,
+  // routing, and vars are meaningless because Workers Assets serves everything
+  // directly.
   if (options.serverless && config.main) {
+    const flags = new Set<string>(
+      Array.isArray(config.compatibility_flags) ? config.compatibility_flags : [],
+    )
+    flags.add(REQUIRED_COMPATIBILITY_FLAG)
+    config.compatibility_flags = [...flags]
+
+    if (
+      typeof config.compatibility_date !== 'string' ||
+      config.compatibility_date < MIN_COMPATIBILITY_DATE
+    )
+      config.compatibility_date = MIN_COMPATIBILITY_DATE
+
     // `basePath` already ends with `/`. Everything is Worker-first except the
     // hashed asset directory. Top-level `public/` files (favicons, llms.txt,
     // SKILL.md) share the URL space with prerendered page HTML, which must reach
     // the Worker for markdown negotiation, so they are Worker-first too and are
     // served straight from the ASSETS binding by the adapter's static middleware.
-    config.run_worker_first = [`${options.basePath}*`, `!${options.basePath}${options.assetsDir}/*`]
+    config.assets = {
+      ...config.assets,
+      run_worker_first: [`${options.basePath}*`, `!${options.basePath}${options.assetsDir}/*`],
+    }
     config.vars = { ...config.vars, NODE_ENV: 'production' }
+    // The generated deployment config does not copy vars from a user's root
+    // Wrangler config. Preserve any variables configured in the dashboard.
+    config.keep_vars = true
 
-    // The OG handler's takumi wasm ships in the server bundle and must be
-    // uploaded as a CompiledWasm module — workerd forbids compiling wasm from
-    // bytes at runtime. The compressed build-metadata sidecar ships as a Data
-    // module so the loader can import its bytes as an ArrayBuffer. Keep Waku's
-    // existing ESModule rule.
-    const rules: Array<{ type: string; globs: string[] }> = Array.isArray(config.rules)
-      ? config.rules
-      : []
-    if (!rules.some((rule) => rule.type === 'CompiledWasm'))
-      rules.push({ type: 'CompiledWasm', globs: ['**/*.wasm'] })
-    if (!rules.some((rule) => rule.type === 'Data'))
-      rules.push({ type: 'Data', globs: ['**/*.json.gz'] })
-    config.rules = rules
+    // Wrangler's default module rules upload `.wasm` as CompiledWasm and `.bin`
+    // as Data, so the OG renderer and compressed metadata need no custom rules.
   }
 
   writeFileSync(filePath, `${JSON.stringify(config, null, 2)}\n`)

@@ -8,8 +8,8 @@
 // workerd forbids compiling WebAssembly from bytes at runtime, so the
 // Node/Vercel path (fetch the `?url` asset, pass the ArrayBuffer to
 // `ImageResponse`) cannot work here. Instead the `.wasm` is uploaded as a
-// CompiledWasm module (see the wrangler `rules` added by the enhancer) and
-// imported relative to this chunk, which yields a precompiled
+// CompiledWasm module (via Wrangler's default `.wasm` rule) and imported
+// relative to this chunk, which yields a precompiled
 // `WebAssembly.Module` as the default export.
 
 export { ImageResponse } from '@takumi-rs/image-response/wasm'

@@ -8,23 +8,23 @@ Vocs selects a Cloudflare Workers adapter when `CLOUDFLARE=1` is set at build ti
 
 ## Deploy with the Wrangler CLI
 
-Install the [Wrangler CLI](https://developers.cloudflare.com/workers/wrangler/), then build with `CLOUDFLARE=1` and deploy:
+Install the [Wrangler CLI](https://developers.cloudflare.com/workers/wrangler/) as a development dependency, then build with `CLOUDFLARE=1` and deploy:
 
 :::code-group
 ```bash [npm]
-npm i -g wrangler
+npm install -D wrangler
 CLOUDFLARE=1 npm run build
-wrangler deploy
+npx wrangler deploy
 ```
 ```bash [pnpm]
-pnpm add -g wrangler
+pnpm add -D wrangler
 CLOUDFLARE=1 pnpm build
-wrangler deploy
+pnpm wrangler deploy
 ```
 ```bash [yarn]
-yarn global add wrangler
+yarn add -D wrangler
 CLOUDFLARE=1 yarn build
-wrangler deploy
+yarn wrangler deploy
 ```
 :::
 
@@ -32,7 +32,7 @@ The build emits a ready-to-deploy Wrangler config, so `wrangler deploy` works wi
 
 ### Custom Wrangler config
 
-If you commit a `wrangler.jsonc` (or `wrangler.toml`) to your project root, Vocs respects it: your `name`, `compatibility_date`, and `compatibility_flags` are read from it, and the build never overwrites your file. Only the build-emitted config under `dist/server` is patched to guarantee the runtime requirements (`nodejs_compat` and a recent enough `compatibility_date` so `process.env` is populated from your vars and secrets).
+If you commit a `wrangler.jsonc` (or `wrangler.toml`) to your project root, Vocs reads its `name`, `compatibility_date`, and `compatibility_flags`, and never overwrites the file. The generated deployment config under `dist/server` adds the runtime requirements (`nodejs_compat` and a recent enough `compatibility_date` so `process.env` is populated from your vars and secrets).
 
 ### Local preview
 
@@ -41,15 +41,15 @@ Run a build, then preview the Worker locally with `wrangler dev`:
 :::code-group
 ```bash [npm]
 CLOUDFLARE=1 npm run build
-wrangler dev
+npx wrangler dev
 ```
 ```bash [pnpm]
 CLOUDFLARE=1 pnpm build
-wrangler dev
+pnpm wrangler dev
 ```
 ```bash [yarn]
 CLOUDFLARE=1 yarn build
-wrangler dev
+yarn wrangler dev
 ```
 :::
 
@@ -66,7 +66,7 @@ Workers Builds sets `WORKERS_CI` automatically, so a plain `pnpm build` also sel
 
 ## Environment Variables
 
-Runtime variables and secrets (for example `SLACK_FEEDBACK_WEBHOOK` or `GITHUB_TOKEN`) must be set as [Wrangler vars and secrets](https://developers.cloudflare.com/workers/configuration/environment-variables/). The `nodejs_compat` flag — which Vocs enables automatically — exposes them on `process.env` at request time. `NODE_ENV=production` is emitted into the generated config automatically.
+Runtime variables and secrets (for example `SLACK_FEEDBACK_WEBHOOK` or `GITHUB_TOKEN`) must be set in the Cloudflare dashboard or with the [Wrangler secret commands](https://developers.cloudflare.com/workers/configuration/secrets/). Vocs preserves dashboard variables on deploy. The `nodejs_compat` flag — which Vocs enables automatically — exposes them on `process.env` at request time, and `NODE_ENV=production` is emitted into the generated config.
 
 ## Full-static Sites
 

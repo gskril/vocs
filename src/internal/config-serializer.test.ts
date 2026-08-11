@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'vitest'
 import { define } from './config.js'
-import { deserialize, serialize } from './config-serializer.js'
+import { deserialize, serialize, serializeModule } from './config-serializer.js'
 
 describe('config serializer', () => {
   test('round trips route-aware head and title callbacks', () => {
@@ -58,5 +58,23 @@ describe('config serializer', () => {
           lastmod: '2026-01-01',
         }),
     ).toBe(false)
+  })
+
+  test('serializes callbacks as executable module code', () => {
+    const config = define({
+      ogImageUrl(path, { baseUrl }) {
+        return `${baseUrl}${path}`
+      },
+    })
+
+    const source = serializeModule(config)
+    const result = new Function(`return ${source}`)() as typeof config
+
+    expect(source).not.toContain('_vocs-fn_')
+    expect(result.ogImageUrl).toBeTypeOf('function')
+    expect(
+      typeof result.ogImageUrl === 'function' &&
+        result.ogImageUrl('/guide', { baseUrl: 'https://example.com' }),
+    ).toBe('https://example.com/guide')
   })
 })

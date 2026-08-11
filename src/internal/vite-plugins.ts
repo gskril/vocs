@@ -1027,7 +1027,7 @@ export function virtualConfig(config: Config.Config): PluginOption {
         const currentConfig = OpenApiRegistry.mergeSidebar(Config.getGlobal() ?? config)
         const serializedConfig =
           mode === 'development' ? { ...currentConfig, baseUrl: undefined } : currentConfig
-        return `export const config = ${ConfigSerializer.serialize(serializedConfig)}`
+        return `export const config = ${ConfigSerializer.serializeModule(serializedConfig)}`
       }
       return
     },

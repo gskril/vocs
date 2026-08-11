@@ -60,7 +60,10 @@ describe('patchWranglerConfig', () => {
 
   it('adds nodejs_compat when no flags are present', () => {
     const dir = makeTempDir()
-    const filePath = writeConfig(dir, { compatibility_date: '2025-11-17' })
+    const filePath = writeConfig(dir, {
+      main: 'index.js',
+      compatibility_date: '2025-11-17',
+    })
 
     patchWranglerConfig(filePath, serverlessOptions)
 
@@ -69,7 +72,7 @@ describe('patchWranglerConfig', () => {
 
   it('bumps a compatibility date older than the minimum', () => {
     const dir = makeTempDir()
-    const filePath = writeConfig(dir, { compatibility_date: '2024-01-01' })
+    const filePath = writeConfig(dir, { main: 'index.js', compatibility_date: '2024-01-01' })
 
     patchWranglerConfig(filePath, serverlessOptions)
 
@@ -78,7 +81,7 @@ describe('patchWranglerConfig', () => {
 
   it('sets the minimum compatibility date when none is present', () => {
     const dir = makeTempDir()
-    const filePath = writeConfig(dir, {})
+    const filePath = writeConfig(dir, { main: 'index.js' })
 
     patchWranglerConfig(filePath, serverlessOptions)
 
@@ -87,14 +90,17 @@ describe('patchWranglerConfig', () => {
 
   it('preserves a compatibility date newer than the minimum', () => {
     const dir = makeTempDir()
-    const filePath = writeConfig(dir, { compatibility_date: '2025-11-17' })
+    const filePath = writeConfig(dir, {
+      main: 'index.js',
+      compatibility_date: '2025-11-17',
+    })
 
     patchWranglerConfig(filePath, serverlessOptions)
 
     expect(readConfig(filePath).compatibility_date).toBe('2025-11-17')
   })
 
-  it('adds worker-first routing, NODE_ENV and wasm/data rules for a serverless config with a main', () => {
+  it('adds Worker routing and runtime config without overriding module rules', () => {
     const dir = makeTempDir()
     const filePath = writeConfig(dir, {
       main: 'index.js',
@@ -104,14 +110,14 @@ describe('patchWranglerConfig', () => {
     patchWranglerConfig(filePath, serverlessOptions)
 
     const config = readConfig(filePath)
-    expect(config.run_worker_first).toEqual(['/*', '!/assets/*'])
+    expect(config.run_worker_first).toBeUndefined()
+    expect(config.assets.run_worker_first).toEqual(['/*', '!/assets/*'])
     expect(config.vars).toEqual({ NODE_ENV: 'production' })
-    expect(config.rules).toContainEqual({ type: 'ESModule', globs: ['**/*.js', '**/*.mjs'] })
-    expect(config.rules).toContainEqual({ type: 'CompiledWasm', globs: ['**/*.wasm'] })
-    expect(config.rules).toContainEqual({ type: 'Data', globs: ['**/*.json.gz'] })
+    expect(config.keep_vars).toBe(true)
+    expect(config.rules).toEqual([{ type: 'ESModule', globs: ['**/*.js', '**/*.mjs'] }])
   })
 
-  it('adds no worker-first routing, vars or wasm/data rules for a config without a main (full-static)', () => {
+  it('leaves Worker-only config unset for a full-static build', () => {
     const dir = makeTempDir()
     const filePath = writeConfig(dir, { compatibility_date: '2025-11-17' })
 
@@ -121,27 +127,8 @@ describe('patchWranglerConfig', () => {
     expect(config.run_worker_first).toBeUndefined()
     expect(config.vars).toBeUndefined()
     expect(config.rules).toBeUndefined()
-    // Flags and date are still applied so full-static workers get nodejs_compat.
-    expect(config.compatibility_flags).toEqual(['nodejs_compat'])
+    expect(config.compatibility_flags).toBeUndefined()
     expect(config.compatibility_date).toBe('2025-11-17')
-  })
-
-  it('does not duplicate wasm/data rules that are already present', () => {
-    const dir = makeTempDir()
-    const filePath = writeConfig(dir, {
-      main: 'index.js',
-      rules: [
-        { type: 'ESModule', globs: ['**/*.js', '**/*.mjs'] },
-        { type: 'CompiledWasm', globs: ['**/*.wasm'] },
-        { type: 'Data', globs: ['**/*.json.gz'] },
-      ],
-    })
-
-    patchWranglerConfig(filePath, serverlessOptions)
-
-    const rules = readConfig(filePath).rules as Array<{ type: string }>
-    expect(rules.filter((rule) => rule.type === 'CompiledWasm')).toHaveLength(1)
-    expect(rules.filter((rule) => rule.type === 'Data')).toHaveLength(1)
   })
 
   it('prefixes worker-first globs with a non-root basePath', () => {
@@ -150,7 +137,7 @@ describe('patchWranglerConfig', () => {
 
     patchWranglerConfig(filePath, { ...serverlessOptions, basePath: '/docs/' })
 
-    expect(readConfig(filePath).run_worker_first).toEqual(['/docs/*', '!/docs/assets/*'])
+    expect(readConfig(filePath).assets.run_worker_first).toEqual(['/docs/*', '!/docs/assets/*'])
   })
 })
 
@@ -171,7 +158,7 @@ describe('compressBuildMetadata (cloudflare)', () => {
 
     compressBuildMetadata(serverDir)
 
-    const gzPath = path.join(serverDir, '__waku_build_metadata.json.gz')
+    const gzPath = path.join(serverDir, '__waku_build_metadata.bin')
     expect(fs.existsSync(gzPath)).toBe(true)
 
     // Roundtrip: gunzip the sidecar and compare to the original JSON payload.
@@ -183,7 +170,7 @@ describe('compressBuildMetadata (cloudflare)', () => {
     // from disk like the Vercel variant does.
     const loader = fs.readFileSync(path.join(serverDir, '__waku_build_metadata.js'), 'utf-8')
     expect(loader).toContain("import { gunzipSync } from 'node:zlib'")
-    expect(loader).toContain("import compressed from './__waku_build_metadata.json.gz'")
+    expect(loader).toContain("import compressed from './__waku_build_metadata.bin'")
     expect(loader).toContain('new Uint8Array(compressed)')
     expect(loader).not.toContain('node:fs')
     expect(loader).not.toContain('readFileSync')
@@ -200,7 +187,7 @@ describe('compressBuildMetadata (cloudflare)', () => {
 
     compressBuildMetadata(serverDir)
 
-    expect(fs.existsSync(path.join(serverDir, '__waku_build_metadata.json.gz'))).toBe(false)
+    expect(fs.existsSync(path.join(serverDir, '__waku_build_metadata.bin'))).toBe(false)
     // The malformed module is left untouched.
     expect(fs.readFileSync(path.join(serverDir, '__waku_build_metadata.js'), 'utf-8')).toBe(
       'export const buildMetadata = notAMap;\n',
@@ -213,7 +200,7 @@ describe('compressBuildMetadata (cloudflare)', () => {
     fs.mkdirSync(serverDir, { recursive: true })
 
     expect(() => compressBuildMetadata(serverDir)).not.toThrow()
-    expect(fs.existsSync(path.join(serverDir, '__waku_build_metadata.json.gz'))).toBe(false)
+    expect(fs.existsSync(path.join(serverDir, '__waku_build_metadata.bin'))).toBe(false)
   })
 })
 
@@ -228,7 +215,7 @@ describe('cloudflare build enhancer', () => {
     // Waku's enhancer emits a root wrangler.jsonc (no user file present).
     const config = JSON.parse(fs.readFileSync(path.resolve('wrangler.jsonc'), 'utf-8'))
     expect(config.compatibility_flags).toContain('nodejs_compat')
-    expect(config.run_worker_first).toEqual(['/*', '!/assets/*'])
+    expect(config.assets.run_worker_first).toEqual(['/*', '!/assets/*'])
     expect(config.vars).toEqual({ NODE_ENV: 'production' })
   })
 
