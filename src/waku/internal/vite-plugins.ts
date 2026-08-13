@@ -309,17 +309,20 @@ if (import.meta.hot) {
         const globBase = `/${config.srcDir}/${SRC_PAGES}`
         const globPattern = `${globBase}/**/*.{${EXTENSIONS.map((ext) => ext.slice(1)).join(',')}}`
         const middlewareGlob = `/${config.srcDir}/${SRC_MIDDLEWARE}/*.{${EXTENSIONS.map((ext) => ext.slice(1)).join(',')}}`
+        const loadOpenapi = vocsConfig.openapi?.length
+          ? `, loadOpenapi: () => import('vocs/waku/internal/openapi')`
+          : ''
         return `
 import { middlewareModules } from 'vocs/waku/middleware';
 import { router } from 'vocs/waku/router';
-import adapter from 'waku/adapters/default';
+import adapter from ${JSON.stringify(config.unstable_adapter)};
 
 export default adapter(
   router(
     import.meta.glob(
       ${JSON.stringify(globPattern)}
     ),
-    { srcDir: ${JSON.stringify(config.srcDir)} }
+    { srcDir: ${JSON.stringify(config.srcDir)}${loadOpenapi} }
   ),
   {
     middlewareModules: middlewareModules(

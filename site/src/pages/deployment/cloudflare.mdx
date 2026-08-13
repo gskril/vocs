@@ -80,7 +80,6 @@ Dynamic OG images from the `/api/og` endpoint are supported — the Takumi WASM 
 
 Cloudflare Workers is a serverless runtime with no persistent filesystem, so a few features degrade or are unavailable at runtime:
 
-- **MCP page tools** — `list_pages` and `read_page` read your source page tree, which is not present on Workers. These tools degrade gracefully; markdown negotiation and search still work.
 - **Shell-based features** — anything that shells out at runtime (Rust twoslash, git-based changelog metadata) is a no-op. Twoslash still runs at build time.
-- **Worker size limits** — Workers are capped at 3 MB (free) / 10 MB (paid), gzipped. Vocs automatically compresses the largest artifact (the build metadata), but very large sites may still exceed the paid limit.
+- **Worker size limits** — Workers are capped at 3 MB (free) / 10 MB (paid), gzipped. Vocs compresses build metadata and omits the OpenAPI runtime when no specs are configured, but very large sites may still exceed the paid limit.
 - **AI search index** — bake the search index at build time (the default) or point search at a remote vector store; the runtime index build fallback relies on the filesystem and is unavailable on Workers.

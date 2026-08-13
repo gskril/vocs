@@ -130,8 +130,8 @@ export class WebStreamableHTTPServerTransport {
     const isInitialize = messages.some(
       (message) => 'method' in message && message.method === 'initialize',
     )
-    if (!this.sessionId && isInitialize) {
-      this.sessionId = this._options.sessionIdGenerator?.() ?? randomUUID()
+    if (!this.sessionId && isInitialize && this._options.sessionIdGenerator) {
+      this.sessionId = this._options.sessionIdGenerator()
       this._options.onsessioninitialized?.(this.sessionId)
     }
 

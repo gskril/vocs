@@ -95,6 +95,16 @@ describe('WebStreamableHTTPServerTransport', () => {
     expect(ack.status).toBe(202)
     expect(ack.headers.get('mcp-session-id')).toBe('session-1')
   })
+
+  it('supports stateless initialization without a session generator', async () => {
+    const transport = new WebStreamableHTTPServerTransport()
+    replyOnRequest(transport)
+
+    const response = await transport.handleRequest(request(1, 'initialize'), false)
+
+    expect(response.headers.get('mcp-session-id')).toBeNull()
+    expect(transport.sessionId).toBeUndefined()
+  })
 })
 
 describe('WebStreamableHTTPServerTransport with a real McpServer', () => {

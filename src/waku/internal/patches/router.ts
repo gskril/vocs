@@ -13,6 +13,7 @@ type Pages = ReturnType<typeof createPages>
 type RouteModule = ApiRouteModule & {
   default: FunctionComponent<{ children: ReactNode }> | { fetch: ApiHandler }
 }
+type OpenApiModule = typeof import('../openapi.js')
 
 type RenderHtml = (
   elementsStream: ReadableStream,
@@ -76,6 +77,8 @@ export function router(
     apiDir?: string
     /** e.g. `"_slices"` will detect slices in `src/pages/_slices`. */
     slicesDir?: string
+    /** Loads the OpenAPI renderer when OpenAPI is enabled at build time. */
+    loadOpenapi?: () => Promise<OpenApiModule>
     unstable_skipBuild?: (routePath: string) => boolean
   },
 ): Pages {
@@ -84,6 +87,7 @@ export function router(
     srcDir,
     apiDir = '_api',
     slicesDir = '_slices',
+    loadOpenapi,
     unstable_skipBuild,
   } = options || {}
 
@@ -138,15 +142,15 @@ export function router(
   return wrapPages(
     createPages(
       async ({ createPage, createLayout, createRoot, createApi, createSlice }) => {
-        // OpenAPI config/specs (data-only virtual modules, safe to import
-        // eagerly). The set of OpenAPI route paths lets the page loop below skip
-        // creating a standalone page for any consumer override mounted at one of
-        // them — the OpenAPI loop owns that route and renders the override as the
-        // page intro.
+        // The generated server entry only supplies this loader when OpenAPI is
+        // enabled. Keeping the renderer behind that build-time boundary lets
+        // bundlers omit its large UI and icon dependencies for other sites.
         const { config } = await import('virtual:vocs/config')
-        const { specs } = await import('virtual:vocs/openapi')
+        const openapi = await loadOpenapi?.()
+        const openapiEntries = openapi ? (config.openapi ?? []) : []
+        const specs = openapi?.specs ?? {}
         const openapiRoutePaths = new Set<string>()
-        for (const entry of config.openapi ?? []) {
+        for (const entry of openapiEntries) {
           openapiRoutePaths.add(entry.path)
           for (const group of specs[entry.path]?.groups ?? [])
             openapiRoutePaths.add(`${entry.path}/${group.id}`)
@@ -157,7 +161,7 @@ export function router(
         // layout (see the OpenAPI loop below).
         const isOpenApiGuidePath = (path: string) =>
           !openapiRoutePaths.has(path) &&
-          (config.openapi ?? []).some((entry) => path.startsWith(`${entry.path}/`))
+          openapiEntries.some((entry) => path.startsWith(`${entry.path}/`))
 
         // Route paths already claimed by an explicit page or API route.
         // Auto-generated OpenAPI section/group pages yield to these so a spec
@@ -326,13 +330,8 @@ export function router(
         }
 
         // Mount OpenAPI sections programmatically from config (no source files).
-        // `OpenApiPage` is imported lazily inside this RSC-only callback so the
-        // client-component chain (Layout) is never pulled into the shared/SSR
-        // module graph.
-        if (config.openapi?.length) {
-          const { OpenApiGuide, OpenApiPage } = await import(
-            '../../../react/internal/openapi/OpenApiPage.js'
-          )
+        if (openapi) {
+          const { OpenApiGuide, OpenApiPage } = openapi
 
           // Resolves a consumer "override" page mounted at `routePath` into the
           // props (`intro` content + frontmatter `title`) layered onto the
@@ -351,7 +350,7 @@ export function router(
             return { intro: createElement(Content), title: mod.frontmatter?.title }
           }
 
-          for (const entry of config.openapi) {
+          for (const entry of openapiEntries) {
             // Section root: overview listing every category.
             const rootProps = await overrideProps(entry.path)
             createOpenApiPage({

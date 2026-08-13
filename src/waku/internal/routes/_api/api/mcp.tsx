@@ -6,6 +6,13 @@ import {
   WebStreamableHTTPServerTransport,
 } from '../../../../../internal/mcp-transport.js'
 import { loadAiSearchManifest } from '../../../ai-search.js'
+import * as CloudflareAssets from '../../../cloudflare-assets.js'
+
+const pages = CloudflareAssets.mcpPageSource()
+
+function createServer(config: Config.Config) {
+  return Mcp.createServer(config, { loadManifest: loadAiSearchManifest, pages })
+}
 
 /**
  * GET /api/mcp - Establish SSE stream (deprecated HTTP+SSE transport)
@@ -21,7 +28,7 @@ export async function GET() {
   }
 
   const transport = new WebSSEServerTransport('/api/mcp/messages')
-  const server = Mcp.createServer(config, { loadManifest: loadAiSearchManifest })
+  const server = createServer(config)
 
   McpSessions.setSession(transport.sessionId, { transport, server })
 
@@ -63,6 +70,16 @@ export async function POST(request: Request) {
     )
   }
 
+  // Cloudflare Workers do not guarantee that consecutive requests reach the
+  // same isolate. Use the protocol's stateless mode there instead of relying
+  // on the in-memory session map.
+  if (await CloudflareAssets.isAvailable()) {
+    const transport = new WebStreamableHTTPServerTransport()
+    const server = createServer(config)
+    await server.connect(transport as never)
+    return transport.handleRequest(body, useSSE)
+  }
+
   if (sessionId && McpSessions.hasSession(sessionId)) {
     const session = McpSessions.getSession(sessionId)
     if (!session) throw new Error('Session disappeared unexpectedly')
@@ -89,7 +106,7 @@ export async function POST(request: Request) {
     },
   })
 
-  const server = Mcp.createServer(config, { loadManifest: loadAiSearchManifest })
+  const server = createServer(config)
   await server.connect(transport as never)
 
   return transport.handleRequest(body, useSSE)
