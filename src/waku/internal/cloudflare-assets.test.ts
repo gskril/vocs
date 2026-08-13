@@ -20,12 +20,16 @@ describe('mcpPageSource', () => {
             '',
             '- [Home](/index)',
             '- [Guide](/guide/)',
+            '- [[EP 1] Governance](/proposals/1): Voting and governance',
             '- [External](https://example.com/docs)',
           ].join('\n'),
         }),
     })
 
-    await expect(source.listPages()).resolves.toEqual(['/', '/guide'])
+    await expect(source.listPages()).resolves.toEqual(['/', '/guide', '/proposals/1'])
+    await expect(source.searchPages?.('governance')).resolves.toEqual([
+      { path: '/proposals/1', snippet: 'Voting and governance' },
+    ])
   })
 
   it('reads generated Markdown twins', async () => {

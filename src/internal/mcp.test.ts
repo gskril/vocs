@@ -91,6 +91,27 @@ describe('search_docs', () => {
     expect(results[0]?.path).toBe('/deploy')
     expect(results[0]?.snippet).toContain('production hosting')
   })
+
+  it('uses a prebuilt page source before the filesystem fallback', async () => {
+    const config = Config.define({ rootDir: dir })
+    const searchPages = vi.fn(async () => [
+      { path: '/deploy', snippet: 'Publish to production hosting.' },
+    ])
+
+    const server = Mcp.createServer(config, {
+      pages: { listPages: async () => [], readPage: async () => null, searchPages },
+    })
+    const client = await connect(server)
+    const result = await client.callTool({
+      name: 'search_docs',
+      arguments: { query: 'production hosting' },
+    })
+
+    expect(JSON.parse(resultText(result))).toEqual([
+      { path: '/deploy', snippet: 'Publish to production hosting.' },
+    ])
+    expect(searchPages).toHaveBeenCalledWith('production hosting')
+  })
 })
 
 describe('submit_feedback', () => {

@@ -43,7 +43,10 @@ export type McpConfig = {
 export type PageSource = {
   listPages: () => Promise<readonly string[] | undefined>
   readPage: (pagePath: string) => Promise<string | null | undefined>
+  searchPages?: ((query: string) => Promise<readonly PageSearchResult[] | undefined>) | undefined
 }
+
+export type PageSearchResult = { path: string; snippet: string }
 
 /**
  * Create an MCP server instance with all documentation tools registered.
@@ -158,6 +161,12 @@ export function createServer(config: Config, options: createServer.Options = {})
           content: [{ type: 'text', text: JSON.stringify(results, null, 2) }],
         }
       }
+
+      const prebuiltResults = await options.pages?.searchPages?.(query)
+      if (prebuiltResults)
+        return {
+          content: [{ type: 'text', text: JSON.stringify(prebuiltResults, null, 2) }],
+        }
 
       const lowerQuery = query.toLowerCase()
       const pages = await Array.fromAsync(fs.glob(`${pagesDir}/**/*.{md,mdx}`))
