@@ -314,7 +314,7 @@ if (import.meta.hot) {
           : ''
         return `
 import { middlewareModules } from 'vocs/waku/middleware';
-import { router } from 'vocs/waku/router';
+import { router } from 'vocs/waku/internal/router';
 import adapter from ${JSON.stringify(config.unstable_adapter)};
 
 export default adapter(

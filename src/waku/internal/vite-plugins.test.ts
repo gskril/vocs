@@ -23,7 +23,9 @@ describe('userEntries', () => {
   })
 
   it('omits the OpenAPI runtime when OpenAPI is disabled', () => {
-    expect(loadServerEntry()).not.toContain('vocs/waku/internal/openapi')
+    const entry = loadServerEntry()
+    expect(entry).toContain("from 'vocs/waku/internal/router'")
+    expect(entry).not.toContain('vocs/waku/internal/openapi')
   })
 
   it('loads the OpenAPI runtime when OpenAPI is enabled', () => {

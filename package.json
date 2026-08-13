@@ -219,6 +219,11 @@
       "src": "./src/waku/internal/openapi.ts",
       "default": "./dist/waku/internal/openapi.js"
     },
+    "./waku/internal/router": {
+      "types": "./dist/waku/internal/router.d.ts",
+      "src": "./src/waku/internal/router.ts",
+      "default": "./dist/waku/internal/router.js"
+    },
     "./waku/internal/patches/adapters/vercel": {
       "types": "./dist/waku/internal/patches/adapters/vercel.d.ts",
       "src": "./src/waku/internal/patches/adapters/vercel.ts",
