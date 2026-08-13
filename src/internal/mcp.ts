@@ -39,6 +39,15 @@ export type McpConfig = {
   sources?: readonly McpSource.Adapter[] | undefined
 }
 
+/** Runtime source for prebuilt documentation pages on filesystem-less hosts. */
+export type PageSource = {
+  listPages: () => Promise<readonly string[] | undefined>
+  readPage: (pagePath: string) => Promise<string | null | undefined>
+  searchPages?: ((query: string) => Promise<readonly PageSearchResult[] | undefined>) | undefined
+}
+
+export type PageSearchResult = { path: string; snippet: string }
+
 /**
  * Create an MCP server instance with all documentation tools registered.
  */
@@ -60,6 +69,12 @@ export function createServer(config: Config, options: createServer.Options = {})
       inputSchema: {},
     },
     async () => {
+      const prebuiltPages = await options.pages?.listPages()
+      if (prebuiltPages)
+        return {
+          content: [{ type: 'text', text: JSON.stringify(prebuiltPages, null, 2) }],
+        }
+
       const pages = await Array.fromAsync(fs.glob(`${pagesDir}/**/*.{md,mdx}`))
 
       const results = pages.map((page) => {
@@ -86,6 +101,15 @@ export function createServer(config: Config, options: createServer.Options = {})
       },
     },
     async ({ pagePath }) => {
+      const prebuiltPage = await options.pages?.readPage(pagePath)
+      if (prebuiltPage !== undefined) {
+        if (prebuiltPage !== null) return { content: [{ type: 'text', text: prebuiltPage }] }
+        return {
+          content: [{ type: 'text', text: `Page not found: ${pagePath}` }],
+          isError: true,
+        }
+      }
+
       const possiblePaths = [
         path.join(pagesDir, `${pagePath}.mdx`),
         path.join(pagesDir, `${pagePath}.md`),
@@ -137,6 +161,12 @@ export function createServer(config: Config, options: createServer.Options = {})
           content: [{ type: 'text', text: JSON.stringify(results, null, 2) }],
         }
       }
+
+      const prebuiltResults = await options.pages?.searchPages?.(query)
+      if (prebuiltResults)
+        return {
+          content: [{ type: 'text', text: JSON.stringify(prebuiltResults, null, 2) }],
+        }
 
       const lowerQuery = query.toLowerCase()
       const pages = await Array.fromAsync(fs.glob(`${pagesDir}/**/*.{md,mdx}`))
@@ -392,5 +422,7 @@ export declare namespace createServer {
   type Options = {
     /** Source of the prebuilt AI search manifest (e.g. baked into the server bundle). */
     loadManifest?: Retriever.ManifestLoader | undefined
+    /** Source of prebuilt pages on runtimes without the documentation source tree. */
+    pages?: PageSource | undefined
   }
 }

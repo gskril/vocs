@@ -4,6 +4,27 @@ export function serialize(config: Config): string {
   return JSON.stringify(serializeFunctions(config))
 }
 
+/** Serializes config as a JavaScript expression with callbacks embedded as code. */
+export function serializeModule(config: Config): string {
+  return toModuleExpression(serializeFunctions(config))
+}
+
+// biome-ignore lint/suspicious/noExplicitAny: _
+function toModuleExpression(value: any): string {
+  if (Array.isArray(value))
+    return `[${value.map((item) => (item === undefined ? 'null' : toModuleExpression(item))).join(',')}]`
+  if (typeof value === 'object' && value !== null) {
+    const entries = Object.entries(value).filter(
+      ([, item]) => item !== undefined && typeof item !== 'symbol',
+    )
+    return `{${entries
+      .map(([key, item]) => `${JSON.stringify(key)}:${toModuleExpression(item)}`)
+      .join(',')}}`
+  }
+  if (typeof value === 'string' && value.startsWith('_vocs-fn_')) return `(${value.slice(9)})`
+  return JSON.stringify(value) ?? 'undefined'
+}
+
 // biome-ignore lint/suspicious/noExplicitAny: _
 export function serializeFunctions(value: any, key?: string): any {
   if (Array.isArray(value)) {

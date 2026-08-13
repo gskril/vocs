@@ -3,7 +3,8 @@ import type { PluginOption } from 'vite'
 import type { Config as WakuConfig } from 'waku/config'
 import * as Config from '../internal/config.js'
 import { vocs as vocs_core } from '../vite.js'
-import { getDefaultAdapter } from './internal/patches/utils/default-adapter.js'
+import { CLOUDFLARE_ADAPTER, getDefaultAdapter } from './internal/patches/utils/default-adapter.js'
+import { installPreviewServer } from './internal/patches/utils/preview-server.js'
 import * as Plugins from './internal/vite-plugins.js'
 
 /**
@@ -18,6 +19,11 @@ export async function vocs(options: vocs.Options = {}): Promise<PluginOption[]> 
     rscBase = 'RSC',
     unstable_adapter = getDefaultAdapter(),
   } = options
+
+  // Waku's Cloudflare adapter builds against a Vite preview server exposed via
+  // a global that `vocs build` / raw `vite build` don't set. Install it from the
+  // same plugin list, gated on the Cloudflare adapter being selected.
+  if (unstable_adapter === CLOUDFLARE_ADAPTER) installPreviewServer(() => vocs(options))
 
   const config = await Config.resolve()
   const { basePath, srcDir, outDir } = config
@@ -58,6 +64,7 @@ export async function vocs(options: vocs.Options = {}): Promise<PluginOption[]> 
     Plugins.fsRouterTypegen(wakuConfig),
     Plugins.preview(),
     Plugins.vocsConfig(config),
+    ...(unstable_adapter === CLOUDFLARE_ADAPTER ? [Plugins.cloudflareRuntime()] : []),
   ]
 }
 

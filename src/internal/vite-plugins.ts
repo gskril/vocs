@@ -1027,7 +1027,7 @@ export function virtualConfig(config: Config.Config): PluginOption {
         const currentConfig = OpenApiRegistry.mergeSidebar(Config.getGlobal() ?? config)
         const serializedConfig =
           mode === 'development' ? { ...currentConfig, baseUrl: undefined } : currentConfig
-        return `export const config = ${ConfigSerializer.serialize(serializedConfig)}`
+        return `export const config = ${ConfigSerializer.serializeModule(serializedConfig)}`
       }
       return
     },
@@ -1348,6 +1348,9 @@ export { matchIcon, resolveIcon, resolveIconSync } from './icons.js'
 export function openapi(config: Config.Config): PluginOption {
   const virtualModuleId = 'virtual:vocs/openapi'
   const resolvedVirtualModuleId = `\0${virtualModuleId}`
+  const disabledSearchModuleId = '\0virtual:vocs/openapi-search-disabled'
+  const searchOpenApiModules = new Set(['./openapi/registry.js', './openapi/search.js'])
+  let isBuild = false
 
   /** Resolve absolute paths of local file specs for dev watching. */
   function specFilePaths(currentConfig: Config.Config): string[] {
@@ -1364,6 +1367,9 @@ export function openapi(config: Config.Config): PluginOption {
   return {
     name: 'vocs:openapi',
     enforce: 'pre',
+    configResolved(resolvedConfig) {
+      isBuild = resolvedConfig.command === 'build'
+    },
     async buildStart() {
       // Parse specs up front so generated sidebars are available when the
       // `virtual:vocs/config` module is serialized.
@@ -1375,8 +1381,16 @@ export function openapi(config: Config.Config): PluginOption {
         )
       }
     },
-    resolveId(id) {
+    resolveId(id, importer) {
       if (id === virtualModuleId) return resolvedVirtualModuleId
+      if (
+        isBuild &&
+        !config.openapi?.length &&
+        importer &&
+        /[/\\]internal[/\\]search\.[jt]s$/.test(importer) &&
+        searchOpenApiModules.has(id)
+      )
+        return disabledSearchModuleId
       return
     },
     configureServer(server) {
@@ -1398,6 +1412,8 @@ export function openapi(config: Config.Config): PluginOption {
       })
     },
     async load(id) {
+      if (id === disabledSearchModuleId)
+        return 'export const build = async () => ({}); export const toSearchDocuments = () => [];'
       if (id !== resolvedVirtualModuleId) return
 
       const currentConfig = Config.getGlobal() ?? config

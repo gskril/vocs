@@ -619,7 +619,7 @@ export type Config<partial extends boolean = false> = MaybePartial<
     /**
      * Rendering strategy.
      *
-     * - `full-static`: Full static site generation. Compatible with: Netlify, Vercel.
+     * - `full-static`: Full static site generation. Compatible with: Netlify, Vercel, Cloudflare.
      * - `partial-static`: Partial static site (static pages; other routes are dynamic).
      * - `dynamic`: Dynamic site (all routes are dynamic).
      *
@@ -1051,8 +1051,16 @@ export async function resolve(options: resolve.Options = {}): Promise<Config> {
   const { server, rootDir = process.cwd() } = options
 
   if (server && process.env['NODE_ENV'] === 'production') {
-    const configPath = path.resolve(import.meta.dirname, '../vocs.config.js')
-    const resolved = (await import(/* @vite-ignore */ configPath)).default as define.Options
+    // Load the bundled config through a virtual module resolved at build time
+    // (the `vocsConfig` Vite plugin) rather than a runtime-computed absolute path.
+    // A static specifier is analyzable by every target: Node/Vercel/Netlify bundle
+    // it as a lazy chunk, and workerd (which cannot `import()` a computed path and
+    // uploads modules with `no_bundle`) resolves it as part of the module graph.
+    // The inline `as string` keeps the literal specifier for the bundler's plugin
+    // resolution while letting `tsc` treat it as a dynamic specifier (config.ts is
+    // also type-checked in build-tool graphs that don't load `vocs/globals`).
+    const resolved = (await import('virtual:vocs/server-config' as string))
+      .default as define.Options
     return define({ ...resolved, rootDir })
   }
 

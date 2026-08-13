@@ -13,6 +13,7 @@ type Pages = ReturnType<typeof createPages>
 type RouteModule = ApiRouteModule & {
   default: FunctionComponent<{ children: ReactNode }> | { fetch: ApiHandler }
 }
+type OpenApiModule = typeof import('../openapi.js')
 
 type RenderHtml = (
   elementsStream: ReadableStream,
@@ -76,6 +77,8 @@ export function router(
     apiDir?: string
     /** e.g. `"_slices"` will detect slices in `src/pages/_slices`. */
     slicesDir?: string
+    /** Loads the OpenAPI renderer when OpenAPI is enabled at build time. */
+    loadOpenapi?: () => Promise<OpenApiModule>
     unstable_skipBuild?: (routePath: string) => boolean
   },
 ): Pages {
@@ -84,6 +87,7 @@ export function router(
     srcDir,
     apiDir = '_api',
     slicesDir = '_slices',
+    loadOpenapi,
     unstable_skipBuild,
   } = options || {}
 
@@ -138,15 +142,15 @@ export function router(
   return wrapPages(
     createPages(
       async ({ createPage, createLayout, createRoot, createApi, createSlice }) => {
-        // OpenAPI config/specs (data-only virtual modules, safe to import
-        // eagerly). The set of OpenAPI route paths lets the page loop below skip
-        // creating a standalone page for any consumer override mounted at one of
-        // them — the OpenAPI loop owns that route and renders the override as the
-        // page intro.
+        // The generated server entry only supplies this loader when OpenAPI is
+        // enabled. Keeping the renderer behind that build-time boundary lets
+        // bundlers omit its large UI and icon dependencies for other sites.
         const { config } = await import('virtual:vocs/config')
-        const { specs } = await import('virtual:vocs/openapi')
+        const openapi = await loadOpenapi?.()
+        const openapiEntries = openapi ? (config.openapi ?? []) : []
+        const specs = openapi?.specs ?? {}
         const openapiRoutePaths = new Set<string>()
-        for (const entry of config.openapi ?? []) {
+        for (const entry of openapiEntries) {
           openapiRoutePaths.add(entry.path)
           for (const group of specs[entry.path]?.groups ?? [])
             openapiRoutePaths.add(`${entry.path}/${group.id}`)
@@ -157,7 +161,20 @@ export function router(
         // layout (see the OpenAPI loop below).
         const isOpenApiGuidePath = (path: string) =>
           !openapiRoutePaths.has(path) &&
-          (config.openapi ?? []).some((entry) => path.startsWith(`${entry.path}/`))
+          openapiEntries.some((entry) => path.startsWith(`${entry.path}/`))
+
+        // Route paths already claimed by an explicit page or API route.
+        // Auto-generated OpenAPI section/group pages yield to these so a spec
+        // group whose id collides with a real route (e.g. an `mcp` group under
+        // an `/api` section vs. the built-in `/api/mcp` endpoint) can't throw
+        // `Duplicated path` at build time. Registering the same page twice is
+        // also guarded, keeping OpenAPI mounting idempotent.
+        const registeredRoutePaths = new Set<string>()
+        const createOpenApiPage = (page: { path: string; [key: string]: unknown }) => {
+          if (registeredRoutePaths.has(page.path)) return
+          registeredRoutePaths.add(page.path)
+          createPage(page as never)
+        }
 
         for (const file in allModules) {
           const importFn = allModules[file]
@@ -230,6 +247,7 @@ export function router(
                 ...sourceFileProperty,
               })
             } else {
+              registeredRoutePaths.add(path)
               createPage({
                 path,
                 component,
@@ -246,6 +264,7 @@ export function router(
           if (pathItems.at(0) === apiDir) {
             // Strip the apiDir prefix from the path (e.g., _api/hello.txt -> hello.txt)
             const apiPath = '/' + pathItems.slice(1).join('/')
+            registeredRoutePaths.add(apiPath)
             if (config?.render === 'static') {
               if (hasInvalidStaticApiExports(mod) || !mod.GET) {
                 console.warn(
@@ -299,6 +318,7 @@ export function router(
               ...sourceFileProperty,
             })
           } else {
+            registeredRoutePaths.add(path)
             createPage({
               path,
               component: mod.default,
@@ -310,13 +330,8 @@ export function router(
         }
 
         // Mount OpenAPI sections programmatically from config (no source files).
-        // `OpenApiPage` is imported lazily inside this RSC-only callback so the
-        // client-component chain (Layout) is never pulled into the shared/SSR
-        // module graph.
-        if (config.openapi?.length) {
-          const { OpenApiGuide, OpenApiPage } = await import(
-            '../../../react/internal/openapi/OpenApiPage.js'
-          )
+        if (openapi) {
+          const { OpenApiGuide, OpenApiPage } = openapi
 
           // Resolves a consumer "override" page mounted at `routePath` into the
           // props (`intro` content + frontmatter `title`) layered onto the
@@ -335,10 +350,10 @@ export function router(
             return { intro: createElement(Content), title: mod.frontmatter?.title }
           }
 
-          for (const entry of config.openapi) {
+          for (const entry of openapiEntries) {
             // Section root: overview listing every category.
             const rootProps = await overrideProps(entry.path)
-            createPage({
+            createOpenApiPage({
               path: entry.path,
               component: () =>
                 createElement(OpenApiPage, {
@@ -354,7 +369,7 @@ export function router(
             for (const group of ir?.groups ?? []) {
               const groupRoute = `${entry.path}/${group.id}`
               const groupProps = await overrideProps(groupRoute)
-              createPage({
+              createOpenApiPage({
                 path: groupRoute,
                 component: () =>
                   createElement(OpenApiPage, { mount: entry.path, group: group.id, ...groupProps }),
@@ -375,7 +390,7 @@ export function router(
               if (!mod.default) continue
               const Content = mod.default
               const title = mod.frontmatter?.title
-              createPage({
+              createOpenApiPage({
                 path: routePath,
                 component: () => createElement(OpenApiGuide, { title }, createElement(Content)),
                 render: 'static',

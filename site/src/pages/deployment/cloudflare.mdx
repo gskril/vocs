@@ -1,0 +1,85 @@
+---
+outline: 2
+---
+
+# Cloudflare [Deploy your Vocs site to Cloudflare Workers]
+
+Vocs selects a Cloudflare Workers adapter when `CLOUDFLARE=1` is set at build time (or automatically in [Workers Builds](https://developers.cloudflare.com/workers/ci-cd/builds/) CI, where `WORKERS_CI` is present). All render strategies are supported — `dynamic`, `partial-static`, and `full-static` — including markdown negotiation and dynamic OG images. No changes to `vocs.config.ts` are required.
+
+## Deploy with the Wrangler CLI
+
+Install the [Wrangler CLI](https://developers.cloudflare.com/workers/wrangler/) as a development dependency, then build with `CLOUDFLARE=1` and deploy:
+
+:::code-group
+```bash [npm]
+npm install -D wrangler
+CLOUDFLARE=1 npm run build
+npx wrangler deploy
+```
+```bash [pnpm]
+pnpm add -D wrangler
+CLOUDFLARE=1 pnpm build
+pnpm wrangler deploy
+```
+```bash [yarn]
+yarn add -D wrangler
+CLOUDFLARE=1 yarn build
+yarn wrangler deploy
+```
+:::
+
+The build emits a ready-to-deploy Wrangler config, so `wrangler deploy` works with no extra setup. The first run prompts you to log in and creates the Worker. The site is served at `<name>.<subdomain>.workers.dev` until you attach a [custom domain](https://developers.cloudflare.com/workers/configuration/routing/custom-domains/).
+
+### Custom Wrangler config
+
+If you commit a `wrangler.jsonc` (or `wrangler.toml`) to your project root, Vocs reads its `name`, `compatibility_date`, and `compatibility_flags`, and never overwrites the file. The generated deployment config under `dist/server` adds the runtime requirements (`nodejs_compat` and a recent enough `compatibility_date` so `process.env` is populated from your vars and secrets).
+
+### Local preview
+
+Run a build, then preview the Worker locally with `wrangler dev`:
+
+:::code-group
+```bash [npm]
+CLOUDFLARE=1 npm run build
+npx wrangler dev
+```
+```bash [pnpm]
+CLOUDFLARE=1 pnpm build
+pnpm wrangler dev
+```
+```bash [yarn]
+CLOUDFLARE=1 yarn build
+yarn wrangler dev
+```
+:::
+
+## Deploy from Git
+
+Connect your repository with [Workers Builds](https://developers.cloudflare.com/workers/ci-cd/builds/) from the Cloudflare dashboard and use these settings:
+
+| Setting | Value |
+| --- | --- |
+| Build command | `CLOUDFLARE=1 pnpm build` |
+| Deploy command | `npx wrangler deploy` |
+
+Workers Builds sets `WORKERS_CI` automatically, so a plain `pnpm build` also selects the Cloudflare adapter — the explicit `CLOUDFLARE=1` just makes the intent clear and works everywhere. Pushes to your production branch deploy live; other branches get [preview URLs](https://developers.cloudflare.com/workers/configuration/previews/).
+
+## Environment Variables
+
+Runtime variables and secrets (for example `SLACK_FEEDBACK_WEBHOOK` or `GITHUB_TOKEN`) must be set in the Cloudflare dashboard or with the [Wrangler secret commands](https://developers.cloudflare.com/workers/configuration/secrets/). Vocs preserves dashboard variables on deploy. The `nodejs_compat` flag — which Vocs enables automatically — exposes them on `process.env` at request time, and `NODE_ENV=production` is emitted into the generated config.
+
+## Full-static Sites
+
+With `renderStrategy: 'full-static'` the build ships no Worker — just [Workers static assets](https://developers.cloudflare.com/workers/static-assets/). The emitted config has no `main`, `run_worker_first`, or `vars`, and `wrangler deploy` uploads the prerendered site directly.
+
+## OG Images
+
+Dynamic OG images from the `/api/og` endpoint are supported — the Takumi WASM renderer is uploaded as a compiled Worker module, so no static `ogImageUrl` fallback is required.
+
+## Limitations
+
+Cloudflare Workers is a serverless runtime with no persistent filesystem, so a few features degrade or are unavailable at runtime:
+
+- **Shell-based features** — anything that shells out at runtime (Rust twoslash, git-based changelog metadata) is a no-op. Twoslash still runs at build time.
+- **Worker size limits** — Workers are capped at 3 MB (free) / 10 MB (paid), gzipped. Vocs compresses build metadata and omits the OpenAPI runtime when no specs are configured, but very large sites may still exceed the paid limit.
+- **AI search index** — bake the search index at build time (the default) or point search at a remote vector store; the runtime index build fallback relies on the filesystem and is unavailable on Workers.

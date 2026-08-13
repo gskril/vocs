@@ -4,7 +4,7 @@ import * as path from 'node:path'
 import type { ResolvedConfig } from 'vite'
 import { afterEach, describe, expect, test } from 'vitest'
 import type * as Config from './config.js'
-import { resolveSitemapInclude, resolveSitemapLastmod, sitemap } from './vite-plugins.js'
+import { openapi, resolveSitemapInclude, resolveSitemapLastmod, sitemap } from './vite-plugins.js'
 
 const tempDirs = new Set<string>()
 
@@ -147,6 +147,36 @@ describe('sitemap config helpers', () => {
         '2026-01-01',
       ),
     ).toBe('2025-01-01')
+  })
+})
+
+describe('openapi', () => {
+  test('omits OpenAPI search dependencies from builds when disabled', async () => {
+    const plugin = openapi({} as Config.Config) as unknown as {
+      configResolved(config: ResolvedConfig): void
+      load(id: string): Promise<string | undefined>
+      resolveId(id: string, importer?: string): string | undefined
+    }
+
+    plugin.configResolved({ command: 'build' } as ResolvedConfig)
+
+    const id = plugin.resolveId('./openapi/registry.js', '/project/src/internal/search.ts')
+    expect(id).toBe('\0virtual:vocs/openapi-search-disabled')
+    if (!id) throw new Error('Expected the disabled OpenAPI search module to resolve.')
+    await expect(plugin.load(id)).resolves.toContain('toSearchDocuments')
+  })
+
+  test('preserves OpenAPI search dependencies when configured', () => {
+    const plugin = openapi({ openapi: [{}] } as Config.Config) as unknown as {
+      configResolved(config: ResolvedConfig): void
+      resolveId(id: string, importer?: string): string | undefined
+    }
+
+    plugin.configResolved({ command: 'build' } as ResolvedConfig)
+
+    expect(plugin.resolveId('./openapi/registry.js', '/project/src/internal/search.ts')).toBe(
+      undefined,
+    )
   })
 })
 
